@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>MUMUsic</title>
+<link rel="icon" href="/icon.png">
+<link rel="stylesheet" href="/fonts/fonts.css">
+<link rel="stylesheet" href="/style.css">
+<script>
+  try {
+    const t = localStorage.getItem("theme");
+    if (t) document.documentElement.dataset.theme = t;
+  } catch (e) {}
+</script>
+</head>
+<body>
+<header class="titlebar" id="titlebar">
+  <div class="tb-brand"><img src="/icon.png" alt=""><span>MUMUsic</span></div>
+  <div class="tb-drag" data-drag></div>
+  <div class="tb-buttons">
+    <button class="tb-btn" data-win="minimize" title="Minimize"><svg viewBox="0 0 12 12"><path d="M2 6.5h8"/></svg></button>
+    <button class="tb-btn" data-win="maximize" title="Maximize"><svg viewBox="0 0 12 12" id="maxIcon"><path d="M2.5 2.5h7v7h-7z"/></svg></button>
+    <button class="tb-btn close" data-win="close" title="Close to tray"><svg viewBox="0 0 12 12"><path d="M2.5 2.5l7 7M9.5 2.5l-7 7"/></svg></button>
+  </div>
+</header>
+<div class="resize-edges" id="resizeEdges">
+  <i data-edge="top"></i><i data-edge="bottom"></i><i data-edge="left"></i><i data-edge="right"></i>
+  <i data-edge="top-left"></i><i data-edge="top-right"></i><i data-edge="bottom-left"></i><i data-edge="bottom-right"></i>
+</div>
+
+<div class="app" id="app" hidden>
+  <aside class="sidebar">
+    <a class="brand" href="#/home">
+      <span class="brand-mark"><img src="/icon.png" alt=""></span>
+      <span class="brand-text"><b>MUMUSIC</b><small id="brandSub">AMQ + EMQ // ARCHIVE</small></span>
+    </a>
+    <div class="source-switch" id="sourceSwitch" role="radiogroup" aria-label="Libraries"></div>
+    <nav class="nav" id="nav"></nav>
+    <div class="nav-section">
+      <div class="nav-head"><span>PLAYLISTS</span><span class="nav-head-btns"><button class="icon-btn sm" id="aniListBtn" title="Playlist from an AniList list"></button><button class="icon-btn sm" id="newPlaylistBtn" title="New playlist"></button></span></div>
+      <div class="nav-playlists" id="navPlaylists"></div>
+    </div>
+    <div class="sidebar-foot">
+      <button class="foot-btn" id="themeBtn"></button>
+      <a class="foot-btn" href="#/data" id="dataBtn"></a>
+    </div>
+  </aside>
+
+  <main class="main" id="main">
+    <header class="topbar">
+      <button class="icon-btn nav-toggle" id="navToggle" title="Menu"></button>
+      <div class="search">
+        <span class="search-icon" id="searchIcon"></span>
+        <input id="searchInput" type="search" placeholder="Search songs, artists, anime, VNs, tags — or paste a song link" autocomplete="off" spellcheck="false">
+        <kbd>/</kbd>
+      </div>
+      <div class="topbar-meta mono" id="topMeta"></div>
+    </header>
+    <div class="view" id="view"></div>
+  </main>
+
+  <aside class="panel" id="panel" hidden></aside>
+
+  <section class="stage" id="stage" hidden aria-label="Now playing"></section>
+
+  <footer class="player" id="player"></footer>
+</div>
+<section class="splash" id="splash"></section>
+<div class="menu" id="menu" hidden></div>
+<div class="modal-wrap" id="modal" hidden></div>
+<div class="toasts" id="toasts"></div>
+<audio id="audio" preload="auto" crossorigin="anonymous"></audio>
+<script src="/app.js"></script>
+</body>
+</html>

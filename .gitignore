@@ -1,0 +1,21 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+
+# Local data: work databases, the plain library, secrets (only the encrypted library is published, as a release asset)
+data/
+*.db
+*.db-wal
+*.db-shm
+*.mumu
+
+# Build output
+build/
+dist/
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+desktop.ini
