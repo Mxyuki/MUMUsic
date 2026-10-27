@@ -487,6 +487,14 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass
 
+    def send_error(self, code, message=None, explain=None):
+        """Python's own answers (unknown method, bad request) in JSON like the others, and logged: the UI only
+        shows "HTTP <code>" for a body it can't read."""
+        path = urlparse(getattr(self, "path", "") or "").path       # not parsed yet for a malformed request
+        print(f"[http] {code} {self.command} {path}: {message}", flush=True)
+        self.close_connection = True
+        self.send(code, {"error": f"{message or code} ({self.command} {path})"})
+
     def json(self):
         length = int(self.headers.get("Content-Length") or 0)
         return json.loads(self.rfile.read(length) or b"{}")

@@ -18,7 +18,7 @@ from ctypes import wintypes
 
 import webview
 
-from . import config, server, settings
+from . import __version__, config, server, settings
 
 WM_NCLBUTTONDOWN = 0x00A1
 GWL_STYLE, WS_MINIMIZEBOX, WS_SYSMENU = -16, 0x00020000, 0x00080000
@@ -273,8 +273,19 @@ def show_running_instance():
         return False
 
 
+def open_log():
+    """The packaged app has no console: its messages and errors go to LOG_FILE, restarted when it gets big."""
+    config.USER_DIR.mkdir(parents=True, exist_ok=True)
+    big = config.LOG_FILE.exists() and config.LOG_FILE.stat().st_size > 1_000_000
+    sys.stdout = sys.stderr = open(config.LOG_FILE, "w" if big else "a", encoding="utf-8", errors="replace",
+                                   buffering=1)
+    print(f"--- {config.APP_NAME} {__version__} started {time.strftime('%Y-%m-%d %H:%M:%S')}", flush=True)
+
+
 def main():
-    if sys.stdout:
+    if config.FROZEN and "--uninstall" not in sys.argv:
+        open_log()
+    elif sys.stdout:
         sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     if "--uninstall" in sys.argv:
         from . import install

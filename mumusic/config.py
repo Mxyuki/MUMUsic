@@ -33,6 +33,7 @@ INSTANCE_FILE = USER_DIR / "instance.json"
 USER_DB = USER_DIR / "user.db"
 LIBRARY_DB = USER_DIR / "library.db"
 DOWNLOAD_DIR = USER_DIR / "downloads"
+LOG_FILE = USER_DIR / "mumusic.log"          # the packaged app's output (it has no console)
 # A plain library next to the source tree (the maintainer's own build): used as is, no key, no download.
 DEV_LIBRARY_DB = PACKAGE_DIR.parent / "data" / "library.db"
 

@@ -73,7 +73,7 @@ async function request(method, url, body) {
   });
   let data = null;
   try { data = await res.json(); } catch { /* empty */ }
-  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status}`);
+  if (!res.ok) throw new Error((data && data.error) || `HTTP ${res.status} (${method} ${url})`);
   return data;
 }
 const api = {
