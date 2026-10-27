@@ -56,12 +56,7 @@ def import_list(lib, user, statuses):
     ids = [i for w in anime for i in lib.work_songs(w) if lib.songs[i]["file"] and not lib.songs[i]["dub"]]
     ids = lib.dedupe(ids)       # one version of each song (rebroadcasts, a song shared by two seasons)
     name = f"AniList · {user}"
-    pid = userdata.find_playlist(name)
-    created = pid is None
-    if created:
-        pid, added = userdata.create_playlist(name, ids), len(ids)
-    else:
-        added = userdata.add_to_playlist(pid, ids)
+    pid, created, added = userdata.fill_playlist(name, ids)
     found = sum(1 for mid in media if mid in lib.by_anilist)
     return {"id": pid, "name": name, "created": created, "entries": len(media), "found": found,
             "songs": len(ids), "added": added}

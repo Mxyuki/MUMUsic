@@ -38,8 +38,13 @@ DEV_LIBRARY_DB = PACKAGE_DIR.parent / "data" / "library.db"
 
 SOURCES = ("amq", "emq")
 SOURCE_PREFIX = {"amq": "a", "emq": "e"}      # song / work ids are "a<AMQ id>" and "e<EMQ id>"
+# Kinds of song the user can turn off ("amq:INS"): the first word of a song's type, OTHER for EMQ songs without one
+SONG_KINDS = {"amq": ("OP", "ED", "INS"), "emq": ("OP", "ED", "INS", "BGM", "OTHER")}
 
 AMQ_MEDIA = "https://eudist.animemusicquiz.com/"
 EMQ_SITE = "https://erogemusicquiz.com"
 EMQ_MEDIA = EMQ_SITE + "/selfhoststorage/"
+ANILIST_SITE = "https://anilist.co"
+VNDB_SITE = "https://vndb.org"
+VNDB_API = "https://api.vndb.org/kana"
 USER_AGENT = f"{APP_NAME}/{__version__}"

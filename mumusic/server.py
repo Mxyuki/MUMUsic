@@ -11,7 +11,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 
 import requests
 
-from . import __version__, anilist, config, crypto, settings, updater, userdata
+from . import __version__, anilist, config, crypto, settings, updater, userdata, vndb
 from . import discord
 from .discord import PRESENCE
 from .emq_media import EmqMedia
@@ -62,7 +62,7 @@ class State:
                 self.status = "setup"
                 return
             try:
-                lib = Library(path, settings.get("sources"))
+                lib = Library(path, settings.get("sources"), settings.get("skipKinds"))
             except Exception as e:
                 print(f"[library] could not load {path}: {type(e).__name__}: {e}", flush=True)
                 self.status, self.error = ("setup", None) if path == config.LIBRARY_DB else ("error", str(e))
@@ -106,6 +106,8 @@ def api_app(req):
     return {
         "name": config.APP_NAME, "version": __version__, "status": STATE.status, "error": STATE.error,
         "sources": sorted(l.sources) if l else settings.get("sources"),
+        "skipKinds": sorted(l.skip_kinds) if l else settings.get("skipKinds"),
+        "kindCounts": l and l.kind_counts(),
         "library": l and {"version": l.meta.get("version"), "builtAt": l.meta.get("builtAt"),
                           "dev": l.path == config.DEV_LIBRARY_DB},
         "online": bool(config.GITHUB_REPO), "keySaved": bool(settings.get("key")),
@@ -197,8 +199,20 @@ def api_sources(req):
     need(sources, 400, "Pick at least one library")
     settings.update(sources=sources)
     if STATE.lib:
-        STATE.lib.set_sources(sources)
+        STATE.lib.set_sources(sources, STATE.lib.skip_kinds)
     return {"ok": True}
+
+
+@route("PUT", r"/api/song-kinds")
+def api_song_kinds(req):
+    known = {f"{src}:{kind}" for src, kinds in config.SONG_KINDS.items() for kind in kinds}
+    skip = sorted({k for k in req.json().get("skip", []) if k in known})
+    for src, kinds in config.SONG_KINDS.items():
+        need(len([k for k in kinds if f"{src}:{k}" not in skip]), 400, "Keep at least one kind of song on")
+    settings.update(skipKinds=skip)
+    if STATE.lib:
+        STATE.lib.set_sources(STATE.lib.sources, skip)
+    return {"skip": skip}
 
 
 @route("POST", r"/api/window/show")
@@ -308,6 +322,13 @@ def api_person(req, pid):
     return page
 
 
+@route("GET", r"/api/work/" + SONG + r"/site")
+def api_work_site(req, wid):
+    url = lib().work_site(wid)
+    need(url)
+    return {"url": url}
+
+
 @route("GET", r"/api/work/" + SONG)
 def api_work(req, wid):
     page = lib().work_page(wid)
@@ -382,6 +403,15 @@ def api_anilist(req):
     try:
         return anilist.import_list(lib(), body.get("user") or "", body.get("statuses") or [])
     except anilist.AniListError as e:
+        raise ApiError(e.status, str(e))
+
+
+@route("POST", r"/api/vndb")
+def api_vndb(req):
+    body = req.json()
+    try:
+        return vndb.import_list(lib(), body.get("user") or "", body.get("labels") or [], bool(body.get("bgm", True)))
+    except vndb.VndbError as e:
         raise ApiError(e.status, str(e))
 
 

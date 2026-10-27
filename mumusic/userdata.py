@@ -145,6 +145,14 @@ def add_to_playlist(pid, ids):
         return _add(c, pid, ids)
 
 
+def fill_playlist(name, ids):
+    """Creates the playlist, or adds to the one of that name what it misses. (id, created, songs added)."""
+    pid = find_playlist(name)
+    if pid is None:
+        return create_playlist(name, ids), True, len(ids)
+    return pid, False, add_to_playlist(pid, ids)
+
+
 def _add(c, pid, ids):
     pos = c.execute("SELECT COALESCE(MAX(position), 0) FROM playlistSongs WHERE playlistId = ?", (pid,)).fetchone()[0]
     added = 0

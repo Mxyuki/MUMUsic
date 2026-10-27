@@ -6,6 +6,7 @@ from . import config
 
 DEFAULTS = {
     "sources": list(config.SOURCES),
+    "skipKinds": [],             # song kinds never picked for the user ("amq:INS", "emq:BGM"), see config.SONG_KINDS
     "key": None,                 # access key, protected with crypto.protect
     "window": None,              # [width, height]
     "port": None,                # local server port, kept so the window's storage (theme, volume...) persists

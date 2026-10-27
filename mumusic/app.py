@@ -21,6 +21,7 @@ import webview
 from . import config, server, settings
 
 WM_NCLBUTTONDOWN = 0x00A1
+GWL_STYLE, WS_MINIMIZEBOX, WS_SYSMENU = -16, 0x00020000, 0x00080000
 VK_LBUTTON, VK_RBUTTON, SM_SWAPBUTTON = 0x01, 0x02, 23
 SNAP_DISTANCE = 4                 # px from the top of the screen that counts as "dropped at the top"
 DRAG_THRESHOLD = 6                # px the mouse must move before a maximized window comes off the top
@@ -110,8 +111,18 @@ class Shell:
             hwnd = form.Handle.ToInt64()
             # Windows 11 rounded corners for a borderless window (DWMWA_WINDOW_CORNER_PREFERENCE = round)
             ctypes.windll.dwmapi.DwmSetWindowAttribute(ctypes.c_void_p(hwnd), 33, ctypes.byref(ctypes.c_int(2)), 4)
+            self.allow_taskbar_minimize()
             self.fit_maximized_bounds()
         self.on_ui(setup)
+
+    def allow_taskbar_minimize(self):
+        """Clicking the taskbar button of the active window minimizes it only when the window has a minimize box,
+        which a borderless form lacks. Both styles add nothing visible without a caption."""
+        user32 = ctypes.windll.user32
+        hwnd = ctypes.c_void_p(self.form().Handle.ToInt64())
+        style = user32.GetWindowLongW(hwnd, GWL_STYLE)
+        if style & (WS_MINIMIZEBOX | WS_SYSMENU) != WS_MINIMIZEBOX | WS_SYSMENU:
+            user32.SetWindowLongW(hwnd, GWL_STYLE, style | WS_MINIMIZEBOX | WS_SYSMENU)
 
     def fit_maximized_bounds(self):
         """A maximized borderless form covers the taskbar unless told the work area (relative to its monitor)."""

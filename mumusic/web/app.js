@@ -50,6 +50,9 @@ const ICONS = {
   level: '<path d="M4 8h3M4 16h3M17 8h3M17 16h3M10.5 5v14M13.5 8v8"/>',
   anilist: '<path d="M4 19L9.5 5h2L17 19M6.6 13.5h7.8M17 5h3v14"/>',
   refresh: '<path d="M19.5 12a7.5 7.5 0 1 1-2.2-5.3M19.5 4v4.5H15"/>',
+  vndb: '<path d="M3.5 5l5 14h1.5L15 5M17 5h3.5v14"/>',
+  eye: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z"/><circle cx="12" cy="12" r="3"/>',
+  eyeoff: '<path d="M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12zM4 4l16 16"/>',
 };
 const ic = (name) => `<svg viewBox="0 0 24 24" aria-hidden="true">${ICONS[name] || ""}</svg>`;
 
@@ -155,6 +158,11 @@ function songGain(s) {
   if (!state.level || s?.vol == null) return 1;
   return 10 ** (Math.min(MAX_BOOST_DB, LEVEL_DB - s.vol) / 20);
 }
+// The slider is in decibels (VOLUME_DB from silent-ish to full): loudness is heard logarithmically, so with a linear
+// slider all the useful range was squeezed into its first quarter. state.volume stays the gain itself.
+const VOLUME_DB = 50;
+const volumeToPos = (g) => (g > 0 ? Math.max(0, 1 + (20 * Math.log10(g)) / VOLUME_DB) : 0);
+const posToVolume = (p) => (p > 0 ? 10 ** ((VOLUME_DB * (p - 1)) / 20) : 0);
 function applyVolume() {
   const user = state.muted ? 0 : state.volume, g = songGain(current());
   if (gainNode) { audio.volume = 1; gainNode.gain.setTargetAtTime(user * g, actx.currentTime, 0.03); }
@@ -315,6 +323,35 @@ async function importAniList() {
     const missing = r.entries - r.found;
     toast(`${r.created ? "Created" : "Updated"} “${r.name}”: ${r.added ? `${fmt(r.added)} new songs` : "no new songs"}`
       + ` from ${fmt(r.found)} anime${missing ? ` (${missing} not in the AMQ library)` : ""}`, { ms: 7000 });
+  } catch (e) { toast(e.message, { error: true, ms: 6000 }); }
+}
+
+// Same as AniList for visual novels: every song of every VN on a VNDB list (only the labels the user made public).
+const VNDB_LABELS = [[1, "Playing"], [2, "Finished"], [3, "Stalled"], [4, "Dropped"], [5, "Wishlist"], [7, "Voted"]];
+async function importVndb() {
+  const last = store.get("vndb", { user: "", labels: [1, 2], bgm: true });
+  const form = await modal({
+    title: "VNDB playlist", eyebrow: "Import", confirm: "Import",
+    body: `<p>Makes a playlist with all the songs of the visual novels on a VNDB list (only its public labels are seen).
+        Import again later to add the songs of newly added VNs.</p>
+      <input type="text" data-user value="${esc(last.user)}" placeholder="VNDB user name or profile link" maxlength="120">
+      <div class="checks">${VNDB_LABELS.map(([k, label]) => `<label><input type="checkbox" data-label value="${k}"
+        ${last.labels.includes(k) ? "checked" : ""}><span>${label}</span></label>`).join("")}</div>
+      <div class="checks"><label><input type="checkbox" data-bgm ${last.bgm ? "checked" : ""}><span>Include BGM</span></label></div>`,
+    read: (w) => ({ user: $("[data-user]", w).value.trim(), labels: $$("[data-label]:checked", w).map((c) => Number(c.value)),
+                    bgm: $("[data-bgm]", w).checked }),
+  });
+  if (!form?.user) return;
+  if (!form.labels.length) { toast("Pick at least one list", { error: true }); return; }
+  store.set("vndb", form);
+  toast(`Loading ${form.user.replace(/^.*vndb\.org\//i, "").split("/")[0]}'s list…`);
+  try {
+    const r = await api.post("/api/vndb", form);
+    await loadPlaylists();
+    location.hash = `#/playlist/${r.id}`;
+    const missing = r.entries - r.found;
+    toast(`${r.created ? "Created" : "Updated"} “${r.name}”: ${r.added ? `${fmt(r.added)} new songs` : "no new songs"}`
+      + ` from ${fmt(r.found)} VNs${missing ? ` (${missing} not in the EMQ library)` : ""}`, { ms: 7000 });
   } catch (e) { toast(e.message, { error: true, ms: 6000 }); }
 }
 
@@ -569,6 +606,7 @@ const pages = {
           <div class="actions" style="margin-top:0"><button class="btn" data-theme-set="light">${ic("sun")}Light</button><button class="btn" data-theme-set="dark">${ic("moon")}Dark</button><button class="btn ghost" data-theme-set="">System</button></div></div>
         <div class="data-card"><div class="eyebrow">04 // About</div><h3>MUMUsic ${esc(a.version || "")}</h3><p>Library ${esc(lib.version || "?")}${lib.dev ? " (local build)" : ""}${lib.builtAt ? `, built ${esc(lib.builtAt.slice(0, 10))}` : ""}. Songs stream from animemusicquiz.com and erogemusicquiz.com.</p>
           ${a.online && !lib.dev ? `<button class="btn" data-check-updates>${ic("refresh")}Check for updates</button>` : ""}</div>
+        ${songKindsCard(a)}
         ${discordCard(a.discord || {})}
       </div>`;
   },
@@ -876,7 +914,7 @@ function renderPlayer() {
   const s = current();
   const p = $("#player");
   const playing = !audio.paused;
-  const vol = state.muted ? 0 : state.volume;
+  const vol = state.muted ? 0 : state.volume, volPos = volumeToPos(vol);
   p.innerHTML = `
     <div class="np">${s ? `<button class="np-cover" data-pc="stage" title="${stage.hidden ? "Open the big view with the clip" : "Back to the library (Esc)"}">${songArt(s, stage.hidden ? "" : "on")}</button><div class="np-text"><div class="t" data-song="${s.id}">${esc(s.name)}</div>
       <div class="s">${byLink(s)} · <a href="#/work/${s.workId}">${esc(s.work)}</a></div></div>
@@ -899,7 +937,7 @@ function renderPlayer() {
       <button class="icon-btn" data-pc="queue" title="Queue">${ic("queue")}</button>
       <button class="icon-btn ${state.level ? "on" : ""}" data-pc="level" title="Volume levelling: ${state.level ? "on, every song plays at the same loudness" : "off"}">${ic("level")}</button>
       <button class="icon-btn vol-ico" data-pc="mute" title="Mute">${ic(vol ? "volume" : "mute")}</button>
-      <div class="range volume" id="volBar"><span class="track"></span><span class="fill" style="width:${vol * 100}%"></span><span class="knob" style="left:${vol * 100}%"></span></div>
+      <div class="range volume" id="volBar"><span class="track"></span><span class="fill" style="width:${volPos * 100}%"></span><span class="knob" style="left:${volPos * 100}%"></span></div>
     </div>`;
   updateProgress();
   renderStage();
@@ -959,10 +997,7 @@ $("#player").addEventListener("pointerdown", (e) => {
       const d = audio.duration || 0;
       if (d) audio.currentTime = v * d;
       updateProgress();
-    } else {
-      state.volume = v; state.muted = false; applyVolume(); store.set("volume", v);
-      $(".fill", bar).style.width = `${v * 100}%`; $(".knob", bar).style.left = `${v * 100}%`;
-    }
+    } else setVolumePos(v);
   };
   const set = dragRange(bar, apply);
   set(e);
@@ -971,6 +1006,20 @@ $("#player").addEventListener("pointerdown", (e) => {
   addEventListener("pointermove", move);
   addEventListener("pointerup", up);
 });
+function setVolumePos(pos) {
+  state.volume = posToVolume(pos); state.muted = false; applyVolume(); store.set("volume", state.volume);
+  const bar = $("#volBar");
+  if (bar) { $(".fill", bar).style.width = `${pos * 100}%`; $(".knob", bar).style.left = `${pos * 100}%`; }
+  const icon = $("#player .vol-ico");
+  if (icon) icon.innerHTML = ic(pos ? "volume" : "mute");
+}
+// Scrolling over the volume icon or slider: 5% of the slider per wheel notch
+$("#player").addEventListener("wheel", (e) => {
+  if (!e.target.closest("#volBar, .vol-ico") || !e.deltaY) return;
+  e.preventDefault();
+  const pos = state.muted ? 0 : volumeToPos(state.volume);
+  setVolumePos(Math.min(1, Math.max(0, Math.round((pos - Math.sign(e.deltaY) * 0.05) * 100) / 100)));
+}, { passive: false });
 $("#player").addEventListener("click", (e) => {
   const b = e.target.closest("[data-pc]");
   if (!b) return;
@@ -995,6 +1044,8 @@ $("#player").addEventListener("click", (e) => {
 // One <video> element is reused for every song and emptied on close: creating a new one per song leaks media
 // players until garbage collection, and once Chrome hits its player limit it pauses / refuses to load the music too.
 let stageSong = null, stageToken = 0, lastHardSync = 0;
+// Clips the user chose to hide (some VN openings are explicit): blurred again whenever the song comes back.
+const blurredSongs = new Set(store.get("blurredSongs", []));
 const stageVideo = document.createElement("video");
 stageVideo.id = "stageVideo";
 stageVideo.muted = stageVideo.defaultMuted = true;
@@ -1044,7 +1095,7 @@ function renderStage() {
       <button class="stage-close" data-stage-close title="Back (Esc)">${ic("close")}<span>Close</span><kbd>Esc</kbd></button>
     </div>
     <div class="stage-body">
-      <div class="stage-screen ${s.video ? "has-video" : ""}">
+      <div class="stage-screen ${s.video ? "has-video" : ""} ${blurredSongs.has(s.id) ? "blurred" : ""}">
         ${songArt(s, "stage-art")}
       </div>
       <div class="stage-info">
@@ -1058,6 +1109,7 @@ function renderStage() {
           <button class="icon-btn ${state.likes.has(s.id) ? "liked" : ""}" data-like="${s.id}" title="Like">${ic("heart")}</button>
           ${state.radio.on ? "" : `<button class="btn" data-radio="${s.id}" title="Keep playing songs that sound like this one">${ic("radio")}Discover</button>`}
           <button class="btn ghost" data-stage-details="${s.id}">${ic("info")}Details</button>
+          ${s.video ? `<button class="btn ghost" data-stage-blur title="Blur this clip, also the next times it plays (B)">${blurLabel(s.id)}</button>` : ""}
         </div>
         <div class="stage-next" id="stageNext"></div>
       </div>
@@ -1077,6 +1129,17 @@ function renderStage() {
     $("#stageKv").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
   }).catch(() => {});
 }
+const blurLabel = (id) => blurredSongs.has(id) ? `${ic("eye")}Show clip` : `${ic("eyeoff")}Blur clip`;
+function toggleBlur() {
+  const s = current();
+  const screen = $(".stage-screen.has-video", stage);
+  if (stage.hidden || !s || !screen) return;
+  if (blurredSongs.has(s.id)) blurredSongs.delete(s.id); else blurredSongs.add(s.id);
+  store.set("blurredSongs", [...blurredSongs]);
+  screen.classList.toggle("blurred", blurredSongs.has(s.id));
+  const btn = $("[data-stage-blur]", stage);
+  if (btn) btn.innerHTML = blurLabel(s.id);
+}
 function renderStageNext() {
   const el = $("#stageNext");
   if (!el) return;
@@ -1087,10 +1150,18 @@ function renderStageNext() {
 function syncStageVideo(hard = false) {
   const v = stageVideo;
   if (!v.isConnected || stage.hidden || v.readyState < 1 || (v.seeking && !hard)) return;
-  const d = audio.currentTime - v.currentTime;
+  // Some EMQ clips are shorter than their mp3: loop the whole clip until the song ends. Without this, every resync
+  // seeked past the end and the clip replayed its first two seconds over and over.
+  const len = v.duration, t = audio.currentTime;
+  const loops = Number.isFinite(len) && len > 0 && audio.duration > len + 1;
+  v.loop = loops;
+  if (!loops && Number.isFinite(len) && t >= len) return;       // a fraction of a second longer: hold the last frame
+  const target = loops ? t % len : t;
+  let d = target - v.currentTime;
+  if (loops && Math.abs(d) > len / 2) d -= Math.sign(d) * len;   // around the loop point the clip is on time
   // a clip that buffers slower than the music would otherwise be re-seeked on every tick (new range request each time)
   if (hard || (Math.abs(d) > 0.6 && Date.now() - lastHardSync > 3000)) {
-    v.currentTime = audio.currentTime; v.playbackRate = 1; lastHardSync = Date.now();
+    v.currentTime = target; v.playbackRate = 1; lastHardSync = Date.now();
   }
   else v.playbackRate = Math.abs(d) > 0.06 ? 1 + Math.max(-0.1, Math.min(0.1, d)) : 1;   // drift back smoothly
   if (audio.paused) { if (!v.paused) v.pause(); }
@@ -1102,6 +1173,7 @@ stage.addEventListener("click", (e) => {
   const t = e.target;
   if (t.closest("[data-stage-close]")) { closeStage(); return; }
   if (t.closest("[data-stage-skip]")) { next(); return; }
+  if (t.closest("[data-stage-blur]")) { toggleBlur(); return; }
   const d = t.closest("[data-stage-details]");
   if (d) { closeStage(); openSong(d.dataset.stageDetails); return; }
   if (t.closest("a[href^='#/']")) closeStage();       // going to an artist / anime / VN / tag page
@@ -1270,6 +1342,17 @@ function songMenu(anchor, id) {
 }
 
 /* ================================================================== global click handling */
+// Middle click on an anime / VN name opens its AniList / VNDB page instead of a new app window.
+const WORK_LINK = 'a[href^="#/work/"]';
+document.addEventListener("mousedown", (e) => { if (e.button === 1 && e.target.closest(WORK_LINK)) e.preventDefault(); });
+document.addEventListener("auxclick", async (e) => {
+  const a = e.button === 1 && e.target.closest(WORK_LINK);
+  if (!a) return;
+  e.preventDefault();
+  try { openExternal((await api.get(`/api/work/${a.getAttribute("href").split("/")[2]}/site`)).url); }
+  catch (err) { toast(err.message, { error: true }); }
+});
+
 document.addEventListener("click", async (e) => {
   const t = e.target;
   const el = (sel) => t.closest(sel);
@@ -1429,11 +1512,36 @@ document.addEventListener("drop", async (e) => {
 });
 
 /* ================================================================== Discord status */
+// Kinds of song the app picks by itself (discovery, recommendations, similar songs). Search and pages show them all.
+const SONG_KINDS = [["amq", "Anime", [["OP", "Openings"], ["ED", "Endings"], ["INS", "Insert songs"]]],
+                    ["emq", "Visual novels", [["OP", "Openings"], ["ED", "Endings"], ["INS", "Insert songs"],
+                                              ["BGM", "BGM / soundtrack"], ["OTHER", "Untyped"]]]];
+function songKindsCard(a) {
+  const skip = new Set(a.skipKinds || []), counts = a.kindCounts || {};
+  return `<div class="data-card"><div class="eyebrow">05 // Songs</div><h3>What plays</h3>
+    <p>Kinds of song discovery, recommendations and similar songs pick from. Search, anime / VN pages and playlists still show everything.</p>
+    ${SONG_KINDS.filter(([src]) => state.sources.includes(src)).map(([src, label, kinds]) => `<div class="kind-group"><span class="mono">${label}</span>
+      <div class="checks">${kinds.map(([k, name]) => `<label><input type="checkbox" data-kind="${src}:${k}" ${skip.has(`${src}:${k}`) ? "" : "checked"}>
+        <span>${name}<small>${fmt(counts[`${src}:${k}`] || 0)}</small></span></label>`).join("")}</div></div>`).join("")}</div>`;
+}
+document.addEventListener("change", async (e) => {
+  const box = e.target.closest("[data-kind]");
+  if (!box) return;
+  const skip = new Set(state.app.skipKinds || []);
+  if (box.checked) skip.delete(box.dataset.kind); else skip.add(box.dataset.kind);
+  try {
+    state.app.skipKinds = (await api.put("/api/song-kinds", { skip: [...skip] })).skip;
+    api.get("/api/home").then((d) => { state.stats = d.stats; updateMeta(); }).catch(() => {});
+  } catch (err) {
+    box.checked = !box.checked;
+    toast(err.message, { error: true });
+  }
+});
 function discordCard(d) {
   const editing = !d.available || state.discordEdit;
   const status = !d.available ? "" : !d.on ? "Off" : d.status === "connected" ? "Showing on your profile"
     : d.status === "idle" ? "Shows up when a song plays" : d.status;
-  return `<div class="data-card"><div class="eyebrow">05 // Discord</div><h3>Discord status</h3>
+  return `<div class="data-card"><div class="eyebrow">06 // Discord</div><h3>Discord status</h3>
     <p>Shows what you listen to on your Discord profile: title, artist, anime or VN, and how far into the song you are.</p>
     ${editing ? `<p style="font-size:13px;color:var(--ink-3)">Needs the id of a Discord application:
         discord.com/developers → New Application (its name is what shows after "Listening to") → copy the Application ID.</p>
@@ -1500,11 +1608,14 @@ document.addEventListener("keydown", (e) => {
   else if (e.key === "ArrowLeft" && e.shiftKey) prev();
   else if (e.key === "ArrowRight") audio.currentTime = Math.min((audio.duration || 0), audio.currentTime + 5);
   else if (e.key === "ArrowLeft") audio.currentTime = Math.max(0, audio.currentTime - 5);
+  else if (e.key.toLowerCase() === "b" && !e.ctrlKey && !e.altKey) toggleBlur();
 });
 
 $("#newPlaylistBtn").innerHTML = ic("plus");
 $("#aniListBtn").innerHTML = ic("anilist");
 $("#aniListBtn").onclick = importAniList;
+$("#vndbBtn").innerHTML = ic("vndb");
+$("#vndbBtn").onclick = importVndb;
 $("#newPlaylistBtn").onclick = async () => { const pid = await createPlaylist(); if (pid) location.hash = `#/playlist/${pid}`; };
 $("#dataBtn").innerHTML = `${ic("data")}Data`;
 $("#searchIcon").innerHTML = ic("search");
@@ -1569,6 +1680,7 @@ function renderSources() {
   $("#sourceSwitch").innerHTML = SOURCE_CHOICES.map(([k, label]) =>
     `<button role="radio" aria-checked="${k === cur}" class="${k === cur ? "active" : ""}" data-source="${k}" title="${SOURCE_TITLE[k]}">${label}</button>`).join("");
   $("#aniListBtn").hidden = !state.sources.includes("amq");
+  $("#vndbBtn").hidden = !state.sources.includes("emq");
   $("#brandSub").textContent = `${sourceName()} // ARCHIVE`;
 }
 $("#sourceSwitch").addEventListener("click", async (e) => {

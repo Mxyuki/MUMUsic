@@ -3,7 +3,8 @@ and discovery.
 
 Everything is loaded for both sources, so likes and playlists always resolve and a liked AMQ song can steer
 recommendations while only EMQ is in use. The active sources (AMQ, EMQ or both, set_sources) only limit what gets
-picked: search results, similar songs, recommendations, discovery, tag pages.
+picked: search results, similar songs, recommendations, discovery, tag pages. Song kinds the user turned off
+(insert songs, BGM...) are left out of what the app picks by itself, but still found by search and on pages.
 
 Sound vectors are whitened MuQ + CLAP embeddings, fitted on AMQ + EMQ together so songs of both libraries can be
 compared. They stay int8 in memory (1.4 kB per song, as in the file) with one scale per
@@ -44,6 +45,11 @@ def json_list(text):
 
 def source_of(item_id):
     return "emq" if item_id.startswith("e") else "amq"
+
+
+def song_kind(s):
+    """"amq:OP", "emq:BGM"... (config.SONG_KINDS)."""
+    return f"{s['src']}:{s['type'].split(' ')[0] or 'OTHER'}"
 
 
 class Song:
@@ -93,7 +99,7 @@ class Vectors:
 
 
 class Library:
-    def __init__(self, path, sources):
+    def __init__(self, path, sources, skip_kinds=()):
         self.path = path
         db = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         db.row_factory = sqlite3.Row
@@ -103,7 +109,7 @@ class Library:
             self.load_sound(db)
         finally:
             db.close()
-        self.set_sources(sources)
+        self.set_sources(sources, skip_kinds)
 
     # ---------------------------------------------------------------- loading
 
@@ -118,9 +124,12 @@ class Library:
                 "search": " ".join(filter(None, [r["name"], r["nameJa"], r["altNames"]])).lower(),
             }
         self.by_anilist = defaultdict(list)        # a few AniList entries map to 2-3 AMQ anime
+        self.by_vndb = defaultdict(list)
         for w in self.works.values():
             if w["aniListId"]:
                 self.by_anilist[w["aniListId"]].append(w["id"])
+            if w["vndbId"]:
+                self.by_vndb[w["vndbId"]].append(w["id"])
 
         self.people = {r["id"]: {"id": r["id"], "kind": r["kind"], "name": r["name"], "search": r["name"].lower()}
                        for r in db.execute("SELECT id, kind, name FROM people")}
@@ -212,17 +221,28 @@ class Library:
         self.feature_arrays(ids, feats)
         self.tag_vectors(ids)
 
-    def set_sources(self, sources):
-        """Which libraries songs are picked from. Instant: nothing is reloaded."""
-        sources = frozenset(sources)
-        mask = np.array([self.songs[sid]["src"] in sources for sid in self.emb_ids], dtype=bool)
+    def set_sources(self, sources, skip_kinds=()):
+        """Which libraries songs are picked from, minus the song kinds turned off. Instant: nothing is reloaded."""
+        sources, skip_kinds = frozenset(sources), frozenset(skip_kinds)
+
+        def picked(sid):
+            s = self.songs[sid]
+            return s["src"] in sources and song_kind(s) not in skip_kinds
+        mask = np.array([picked(sid) for sid in self.emb_ids], dtype=bool)
         active_ids = [sid for sid, ok in zip(self.emb_ids, mask) if ok]
-        song_active = np.array([self.songs[sid]["src"] in sources for sid in self.song_list], dtype=bool)
+        song_active = np.array([picked(sid) for sid in self.song_list], dtype=bool)
         tag_active = song_active[self.t_song] if len(self.t_song) else np.zeros(0, dtype=bool)
         counts = np.bincount(self.t_id[tag_active], minlength=len(self.tag_name))
         vocab = sorted(self.tag_name[t] for t in np.flatnonzero(counts))
-        self.sources, self.mask, self.active_ids, self.tag_active, self.tag_count, self.vocab_active = (
-            sources, mask, active_ids, tag_active, counts, vocab)
+        self.sources, self.skip_kinds, self.mask, self.active_ids, self.tag_active, self.tag_count, self.vocab_active = (
+            sources, skip_kinds, mask, active_ids, tag_active, counts, vocab)
+
+    def kind_counts(self):
+        """Songs of each kind ({"amq:OP": 8839, ...}), for the settings."""
+        counts = defaultdict(int)
+        for s in self.songs.values():
+            counts[song_kind(s)] += 1
+        return counts
 
     def only_active(self, scores):
         """Scores of songs outside the active sources pushed to the bottom."""
@@ -437,6 +457,17 @@ class Library:
             return None
         fields = ("id", "kind", "name", "nameJa", "year", "category", "genres", "tags", "score", "vndbId", "developers")
         return {k: w[k] for k in fields} | {"songs": self.views(self.work_songs(wid))}
+
+    def work_site(self, wid):
+        """The anime's AniList page / the VN's VNDB page (a search there when the library has no id)."""
+        w = self.works.get(wid)
+        if not w:
+            return None
+        if w["kind"] == "vn":
+            return f"{config.VNDB_SITE}/{w['vndbId']}" if w["vndbId"] else f"{config.VNDB_SITE}/v?q={quote(w['name'])}"
+        if w["aniListId"]:
+            return f"{config.ANILIST_SITE}/anime/{w['aniListId']}"
+        return f"{config.ANILIST_SITE}/search/anime?search={quote(w['name'])}"
 
     def song_detail(self, sid):
         s = self.songs.get(sid)

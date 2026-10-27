@@ -516,9 +516,12 @@ tr.row:hover .act-cell .icon-btn, .act-cell .icon-btn.liked { opacity: 1; }
 .modal input[type=text] { width: 100%; height: 44px; padding: 0 14px; background: var(--bg); border: 1px solid var(--line-2); outline: none; font-size: 16px; }
 .modal input[type=text]:focus { border-color: var(--ink); }
 .modal .body p { margin: 0 0 14px; }
-.modal .checks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; margin-top: 14px; }
-.modal .checks label { display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink); }
-.modal .checks input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; }
+.modal .checks, .kind-group .checks { display: grid; grid-template-columns: repeat(3, 1fr); gap: 8px 12px; margin-top: 14px; }
+.modal .checks label, .kind-group .checks label { display: flex; align-items: center; gap: 8px; cursor: pointer; color: var(--ink); }
+.modal .checks input, .kind-group .checks input { accent-color: var(--accent); width: 16px; height: 16px; margin: 0; flex: none; }
+.kind-group { margin-top: 14px; }
+.kind-group .checks { margin-top: 8px; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.kind-group small { margin-left: 6px; font: 500 11px var(--mono); color: var(--ink-3); }
 .nav-head-btns { display: flex; gap: 2px; }
 .modal footer { display: flex; justify-content: flex-end; gap: 10px; padding: 18px 22px 22px; }
 
@@ -577,8 +580,10 @@ tr.row:hover .act-cell .icon-btn, .act-cell .icon-btn.liked { opacity: 1; }
 .stage-screen:not(.has-video) .art { height: 86%; }
 .stage-screen.has-video .art { opacity: .35; }
 .stage-screen.live .art { opacity: 0; }
-.stage-screen video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; opacity: 0; transition: opacity .4s; }
+.stage-screen video { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: contain; background: #000; opacity: 0; transition: opacity .4s, filter .25s; }
 .stage-screen.live video { opacity: 1; }
+/* only the colours stay readable; scaled up so the blur doesn't fade into a see-through edge */
+.stage-screen.blurred video { filter: blur(100px) saturate(1.4) brightness(.8); transform: scale(1.4); }
 .stage-info { min-width: 0; display: flex; flex-direction: column; gap: 12px; }
 .stage-title { margin: 4px 0 0; font: 700 clamp(38px, 4.6vw, 76px)/.92 var(--display); letter-spacing: -.01em; overflow-wrap: anywhere; }
 .stage-artist { font: 600 22px var(--body); color: var(--ink); }
@@ -586,7 +591,7 @@ tr.row:hover .act-cell .icon-btn, .act-cell .icon-btn.liked { opacity: 1; }
 .stage-work { font-size: 16px; color: var(--ink-2); }
 .stage-kv:empty { display: none; }
 .stage-kv { margin: 4px 0 0; }
-.stage-actions { display: flex; align-items: center; gap: 10px; margin-top: 6px; }
+.stage-actions { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; margin-top: 6px; }
 .stage-next { display: flex; flex-direction: column; gap: 4px; margin-top: 14px; padding-top: 14px; border-top: 1px solid var(--line); min-height: 52px; }
 .stage-next:empty { display: none; }
 .stage-next button { text-align: left; font-weight: 600; color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
