@@ -1,0 +1,8 @@
+<Project>
+  <!-- The WebView2 package always references its WPF control too; MUMUsic only uses WinForms. -->
+  <Target Name="DropWebView2Wpf" BeforeTargets="ResolveAssemblyReferences">
+    <ItemGroup>
+      <Reference Remove="@(Reference)" Condition="'%(Filename)' == 'Microsoft.Web.WebView2.Wpf'" />
+    </ItemGroup>
+  </Target>
+</Project>

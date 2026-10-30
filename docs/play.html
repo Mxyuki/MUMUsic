@@ -1,0 +1,59 @@
+<!doctype html>
+<!-- Page behind the "Listen on MUMUsic" button of a Discord status (src/MUMUsic.Desktop/Integrations/DiscordPresence.cs).
+     Discord buttons only open https links: this page opens mumusic://play/<song>, which starts MUMUsic and plays the song. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Listen on MUMUsic</title>
+<meta name="robots" content="noindex">
+<style>
+  :root { --bg: #e8e8e3; --panel: #f4f4f0; --ink: #141414; --ink-2: #55564f; --line: #cfcfc8; --accent: #ffd80a; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #0c0d0e; --panel: #141618; --ink: #ebebe5; --ink-2: #a6a7a1; --line: #26292c; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; min-height: 100vh; display: grid; place-items: center; padding: 16px; background: var(--bg); color: var(--ink);
+         font: 16px/1.5 "Segoe UI", system-ui, sans-serif; }
+  main { width: min(100%, 460px); background: var(--panel); border: 1px solid var(--line); border-top: 3px solid var(--accent); padding: 28px; }
+  .eyebrow { font: 600 11px/1 Consolas, monospace; letter-spacing: .12em; text-transform: uppercase; color: var(--ink-2); }
+  h1 { margin: 10px 0 2px; font-size: 28px; line-height: 1.15; overflow-wrap: anywhere; }
+  .artist { color: var(--ink-2); margin: 0 0 20px; }
+  p { margin: 0 0 18px; color: var(--ink-2); }
+  .actions { display: flex; flex-wrap: wrap; gap: 10px; }
+  a.btn { display: inline-block; padding: 9px 18px; font-weight: 700; text-decoration: none; border: 1px solid var(--line); color: var(--ink); }
+  a.btn.primary { background: var(--accent); border-color: var(--accent); color: #141414; }
+  a.btn:hover { border-color: var(--ink); }
+</style>
+</head>
+<body>
+<main>
+  <div class="eyebrow">MUMUsic // Listen</div>
+  <h1 id="name">A song on MUMUsic</h1>
+  <div class="artist" id="artist"></div>
+  <p id="note">Opening MUMUsic… Your browser may ask whether to open it.</p>
+  <div class="actions">
+    <a class="btn primary" id="open" href="#">Open in MUMUsic</a>
+    <a class="btn" href="https://github.com/Mxyuki/MUMUsic/releases/latest">Get MUMUsic</a>
+  </div>
+</main>
+<script>
+  const params = new URLSearchParams(location.search);
+  const song = params.get("song") || "";
+  const name = params.get("name"), artist = params.get("artist");
+  if (name) { document.getElementById("name").textContent = name; document.title = `${name} · MUMUsic`; }
+  if (artist) document.getElementById("artist").textContent = artist;
+  const open = document.getElementById("open");
+  if (/^[ae][0-9]+$/.test(song)) {
+    open.href = `mumusic://play/${song}`;
+    location.href = open.href;
+    setTimeout(() => {
+      document.getElementById("note").textContent = "Nothing happened? Install MUMUsic (2.0 or newer), then open the song again.";
+    }, 2500);
+  } else {
+    open.remove();
+    document.getElementById("note").textContent = "This link doesn't name a song.";
+  }
+</script>
+</body>
+</html>

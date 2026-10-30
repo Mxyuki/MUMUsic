@@ -19,8 +19,9 @@ To uninstall: Settings > Apps > MUMUsic. You can keep your likes and playlists f
 Needs Windows 10 / 11 (Edge WebView2, already installed on both) and an internet connection: songs stream from
 animemusicquiz.com and erogemusicquiz.com.
 
-At each start MUMUsic checks for a new version of the app and of the library, and asks before updating.
-Your likes, playlists and history stay on your computer (`%APPDATA%\MUMUsic`) and are kept across updates.
+At each start MUMUsic checks for a new version of the app and of the library. Press **Update now**: the app closes,
+installs the new version and opens again on its own. Your likes, playlists and history stay on your computer
+(`%APPDATA%\MUMUsic`) and are kept across updates.
 
 ## Use
 
@@ -29,20 +30,33 @@ Your likes, playlists and history stay on your computer (`%APPDATA%\MUMUsic`) an
 - **Discovery**: starts from a song (or your likes) and keeps going with close matches, never repeating.
   Skip a song in its first 30 seconds and discovery steers away from that sound; like songs to steer towards it.
 - **For you**: songs that sound like several of your liked songs.
-- Click the cover in the player bar for the big view with the anime clip.
+- Click the cover in the player bar for the big view with the anime clip. Songs without a clip show the anime's
+  (AniList) or visual novel's (VNDB) picture instead; **B** blurs the clip or the picture.
+- With Discord open, your status shows the song you're listening to. Friends who have MUMUsic can press
+  **Listen on MUMUsic** on it to play the same song.
 - Space play / pause, Shift + arrows previous / next, arrows seek.
 - Closing the window keeps the music playing in the tray; use the tray menu to quit.
 - **Data** page: export / import your likes and playlists (also reads exports of the older AMQ / EMQ players).
 
-## Run from source
+## Build from source
+
+Needs the [.NET 8 SDK](https://dotnet.microsoft.com/download/dotnet/8.0).
 
 ```
-python -m venv .venv
-.venv\Scripts\pip install -r requirements.txt
-MUMUsic.cmd
+scripts\build.ps1 -Run        tests, build, start the app (-Debug adds the web inspector)
+scripts\release.ps1           dist\MUMUsic-Setup-<version>.exe (Inno Setup is downloaded the first time)
 ```
+
+| Path | What |
+|---|---|
+| `src/MUMUsic.Desktop/` | The app: a WinForms window with WebView2, a local server for the UI, the library and updates |
+| `web/` | The UI (plain HTML / CSS / JS) |
+| `installer/` | The Inno Setup script of the setup, and its images |
+| `tests/` | Tests (`dotnet test`) |
+
+See `docs/ARCHITECTURE.md` for how it fits together.
 
 ## License
 
-The app is MIT licensed (see `LICENSE`). The fonts in `mumusic/web/fonts` are under the SIL Open Font License.
+The app is MIT licensed (see `LICENSE`). The fonts in `web/fonts` are under the SIL Open Font License.
 The song library itself is not part of this repository.

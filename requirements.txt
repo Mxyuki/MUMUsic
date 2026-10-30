@@ -1,7 +1,0 @@
-# The app
-numpy==2.5.4
-pywebview==6.2.1
-pystray==0.19.5
-pillow==13.0.0
-cryptography==50.0.2
-requests==2.34.2

@@ -11,8 +11,13 @@ data/
 *.mumu
 
 # Build output
-build/
-dist/
+bin/
+obj/
+/dist/
+/build/
+/.tools/
+*.user
+.vs/
 
 # Editors / OS
 .vscode/
