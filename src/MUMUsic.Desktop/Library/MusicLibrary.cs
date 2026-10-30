@@ -257,7 +257,7 @@ internal sealed partial class MusicLibrary
         {
             ["id"] = song.Id, ["src"] = song.Src, ["name"] = song.Name, ["artist"] = song.Artist, ["work"] = song.Work,
             ["workId"] = song.WorkId, ["workKind"] = song.WorkKind, ["year"] = song.Year, ["type"] = song.Type,
-            ["dur"] = song.Duration, ["vol"] = song.Volume, ["audio"] = audio, ["video"] = video, ["link"] = link,
+            ["kind"] = song.Kind, ["dur"] = song.Duration, ["vol"] = song.Volume, ["audio"] = audio, ["video"] = video, ["link"] = link,
             ["tags"] = shortTags, ["analysed"] = _embIndex.ContainsKey(id),
             ["by"] = string.IsNullOrEmpty(song.Performer) ? song.Composer : song.Performer,
         };
@@ -389,7 +389,8 @@ internal sealed partial class MusicLibrary
         List<Dictionary<string, object?>> Collect(string role, IEnumerable<string> people)
         {
             var ids = people.SelectMany(x => _byRole[role].GetValueOrDefault(x) ?? []).Where(IsActive).ToHashSet();
-            return Views(Dedupe(SortPopular(ids)));
+            // Dedupe keeps the most popular copy of a song, then the list reads like a discography: by anime / VN.
+            return Views(InWorkOrder(Dedupe(SortPopular(ids))));
         }
 
         var groups = own.SelectMany(x => _parents.GetValueOrDefault(x) ?? []).Distinct()
@@ -416,15 +417,21 @@ internal sealed partial class MusicLibrary
     }
 
     /// <summary>OPs, then EDs, insert songs, BGM.</summary>
-    public List<string> WorkSongs(string workId)
+    public List<string> WorkSongs(string workId) => InWorkOrder(_byWork.GetValueOrDefault(workId) ?? []);
+
+    /// <summary>By anime / VN name, then in each one OP 1, OP 2..., ED 1, ED 2..., insert songs, BGM, then by title.</summary>
+    private List<string> InWorkOrder(IEnumerable<string> ids)
     {
-        int Order(Song s)
+        static int KindRank(Song s)
         {
             var index = Array.IndexOf(TypeOrder, s.Type.Split(' ')[0]);
             return index < 0 ? TypeOrder.Length : index;
         }
-        return (_byWork.GetValueOrDefault(workId) ?? []).Select(id => Songs[id])
-            .OrderBy(Order).ThenBy(s => s.Type, StringComparer.Ordinal).ThenBy(s => s.Name.ToLowerInvariant(), StringComparer.Ordinal)
+        // "ED 10" comes after "ED 2"
+        static int Number(Song s) => int.TryParse(s.Type.Split(' ').ElementAtOrDefault(1), out var n) ? n : 0;
+        return ids.Select(id => Songs[id])
+            .OrderBy(s => s.Work.ToLowerInvariant(), StringComparer.Ordinal).ThenBy(s => s.WorkId, StringComparer.Ordinal)
+            .ThenBy(KindRank).ThenBy(Number).ThenBy(s => s.Name.ToLowerInvariant(), StringComparer.Ordinal)
             .Select(s => s.Id).ToList();
     }
 

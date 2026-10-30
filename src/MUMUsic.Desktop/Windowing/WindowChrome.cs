@@ -29,9 +29,12 @@ internal static partial class WindowChrome
 
     /// <summary>Handles WM_NCCALCSIZE: lets Windows size the side and bottom borders, then moves the client area back
     /// up to the top edge. Returns false for any other message.</summary>
-    public static bool TryHandleCalcSize(ref Message message, Action<Message> defaultProcedure, bool isMaximized, int dpi)
+    public static bool TryHandleCalcSize(ref Message message, Action<Message> defaultProcedure, int dpi)
     {
         if (message.Msg != WmNcCalcSize || message.WParam == IntPtr.Zero) return false;
+        // Asked to Windows, not Form.WindowState: WinForms updates that only after the move, so on a restore from
+        // maximized the frame was still taken back and a strip of the native caption (with its X) showed at the top.
+        var isMaximized = IsZoomed(message.HWnd);
         var top = Marshal.PtrToStructure<NativeRect>(message.LParam).Top;
         defaultProcedure(message);
         var client = Marshal.PtrToStructure<NativeRect>(message.LParam);
@@ -72,6 +75,10 @@ internal static partial class WindowChrome
     [LibraryImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)]
     private static partial bool SetWindowPos(IntPtr hwnd, IntPtr insertAfter, int x, int y, int width, int height, uint flags);
+
+    [LibraryImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    private static partial bool IsZoomed(IntPtr hwnd);
 
     [LibraryImport("user32.dll")]
     private static partial int GetSystemMetricsForDpi(int index, uint dpi);

@@ -1,5 +1,7 @@
 using System.Net;
 using System.Net.Sockets;
+using System.Net.WebSockets;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.Json.Nodes;
 
@@ -21,6 +23,8 @@ internal sealed class HttpRequest
     }
 
     public string? Header(string name) => Headers.GetValueOrDefault(name);
+
+    public bool IsWebSocket => string.Equals(Header("Upgrade"), "websocket", StringComparison.OrdinalIgnoreCase);
 }
 
 /// <summary>Writes one response on the connection.</summary>
@@ -28,7 +32,7 @@ internal sealed class HttpResponse(Stream stream)
 {
     private static readonly Dictionary<int, string> Reasons = new()
     {
-        [200] = "OK", [206] = "Partial Content", [304] = "Not Modified", [400] = "Bad Request", [404] = "Not Found",
+        [101] = "Switching Protocols", [200] = "OK", [206] = "Partial Content", [304] = "Not Modified", [400] = "Bad Request", [404] = "Not Found",
         [405] = "Method Not Allowed", [409] = "Conflict", [416] = "Range Not Satisfiable", [500] = "Internal Server Error",
         [502] = "Bad Gateway", [503] = "Service Unavailable",
     };
@@ -45,6 +49,17 @@ internal sealed class HttpResponse(Stream stream)
     }
 
     public Task JsonAsync(int status, object? value) => SendAsync(status, MUMUsic.Desktop.Json.Bytes(value));
+
+    /// <summary>Answers a WebSocket upgrade (RFC 6455); the connection then belongs to the socket.</summary>
+    public async Task<WebSocket> AcceptWebSocketAsync(HttpRequest request)
+    {
+        const string handshakeGuid = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
+        var key = request.Header("Sec-WebSocket-Key") ?? throw new FormatException("No Sec-WebSocket-Key");
+        var accept = Convert.ToBase64String(SHA1.HashData(Encoding.ASCII.GetBytes(key + handshakeGuid)));
+        await HeadAsync(101, [("Upgrade", "websocket"), ("Connection", "Upgrade"), ("Sec-WebSocket-Accept", accept)]);
+        KeepAlive = false;
+        return WebSocket.CreateFromStream(Stream, isServer: true, subProtocol: null, keepAliveInterval: TimeSpan.FromSeconds(30));
+    }
 
     public async Task HeadAsync(int status, IEnumerable<(string Name, string Value)> headers)
     {

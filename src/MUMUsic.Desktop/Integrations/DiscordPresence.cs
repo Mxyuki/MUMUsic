@@ -4,7 +4,6 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
-using MUMUsic.Desktop.Settings;
 
 namespace MUMUsic.Desktop.Integrations;
 
@@ -24,49 +23,27 @@ internal sealed partial class DiscordPresence
     private static readonly TimeSpan MinInterval = TimeSpan.FromSeconds(4);
     private static readonly TimeSpan Retry = TimeSpan.FromSeconds(20);
 
-    [GeneratedRegex(@"^\d{17,20}$")]
-    private static partial Regex AppIdPattern();
-
     [GeneratedRegex(@"^[ae][0-9]+$")]
     private static partial Regex SongIdPattern();
 
-    private readonly SettingsStore _settings;
     private readonly AutoResetEvent _wake = new(false);
     private NamedPipeClientStream? _pipe;
-    private string? _pipeAppId;
     private string? _wanted, _sent;                // latest activity asked for / sent, as JSON (null = no status)
     private DateTime _lastSend = DateTime.MinValue;
 
-    public DiscordPresence(SettingsStore settings)
+    public DiscordPresence()
     {
-        _settings = settings;
         new Thread(Loop) { IsBackground = true, Name = "Discord status" }.Start();
     }
 
-    /// <summary>Shown on the Data page.</summary>
+    /// <summary>Shown on the Options page.</summary>
     public string Status { get; private set; } = "idle";
-
-    public string ClientId => _settings.Current.DiscordAppId is { Length: > 0 } custom ? custom : AppInfo.DiscordClientId;
 
     /// <summary>song: {name, artist, work, workKind, type, position, duration, playing}, or null to clear.</summary>
     public void Update(JsonObject? song)
     {
         _wanted = song is null ? null : Activity(song).ToJsonString();
         _wake.Set();
-    }
-
-    /// <summary>The application id changed: reconnect with it and send the current song again.</summary>
-    public void Reset()
-    {
-        _sent = "reset";
-        _wake.Set();
-    }
-
-    /// <summary>Checks an application id against the running Discord.</summary>
-    public static void Test(string appId)
-    {
-        if (!AppIdPattern().IsMatch(appId)) throw new DiscordException("An application id is a number of 17 to 20 digits");
-        OpenPipe(appId).Dispose();
     }
 
     private static JsonObject Activity(JsonObject song)
@@ -191,15 +168,9 @@ internal sealed partial class DiscordPresence
             var wait = _lastSend + MinInterval - DateTime.UtcNow;
             if (wait > TimeSpan.Zero) Thread.Sleep(wait);
             wanted = _wanted ?? "null";
-            var appId = ClientId;
             try
             {
-                if (_sent == "reset" || _pipe is null || _pipeAppId != appId)
-                {
-                    ClosePipe();
-                    _pipe = OpenPipe(appId);
-                    _pipeAppId = appId;
-                }
+                _pipe ??= OpenPipe(AppInfo.DiscordClientId);
                 Send(wanted);
                 _sent = wanted;
                 _lastSend = DateTime.UtcNow;

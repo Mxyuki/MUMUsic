@@ -18,8 +18,6 @@ internal sealed class AppSettings
     public string? LibraryVersion { get; set; }
     public string? SkipAppVersion { get; set; }
     public bool Discord { get; set; } = true;
-    /// <summary>Discord application id pasted on the Data page (else <see cref="AppInfo.DiscordClientId"/>).</summary>
-    public string? DiscordAppId { get; set; }
 
     public AppSettings Copy() => (AppSettings)MemberwiseClone();
 }

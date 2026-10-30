@@ -108,7 +108,7 @@ internal sealed class MainForm : Form, IWindowHost
 
     protected override void WndProc(ref Message m)
     {
-        if (WindowChrome.TryHandleCalcSize(ref m, message => base.WndProc(ref message), WindowState == FormWindowState.Maximized, DeviceDpi)) return;
+        if (WindowChrome.TryHandleCalcSize(ref m, message => base.WndProc(ref message), DeviceDpi)) return;
         base.WndProc(ref m);
     }
 

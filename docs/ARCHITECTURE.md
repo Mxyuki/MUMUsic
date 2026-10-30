@@ -26,6 +26,7 @@ src/MUMUsic.Desktop/
   Security/               scrypt, .mumu decryption, DPAPI key storage
   Settings/               settings.json
   Integrations/           EMQ guest session, Discord status, AniList / VNDB list imports, anime / VN pictures (WorkArt)
+  Audio/                  plays the page's music from the app's own process (PageAudio over a WebSocket, waveOut)
   AppLinks.cs             mumusic://play/<song> links: parsing, hand-off to the running app over a named pipe
 web/                      the UI
 installer/MUMUsic.iss     the setup
@@ -33,7 +34,7 @@ scripts/                  build.ps1 (build + tests), release.ps1 (setup), make-i
 tests/                    xUnit: crypto against a file written by the publishing tools, versions, library helpers
 ```
 
-Dependency direction: `MainForm / Program -> Server -> Library / UserData / Updates / Integrations -> Security / Settings / AppInfo`.
+Dependency direction: `MainForm / Program -> Server -> Library / UserData / Updates / Integrations / Audio -> Security / Settings / AppInfo`.
 The library knows nothing about HTTP; the server holds no song logic.
 
 ## Page <-> host
@@ -42,6 +43,9 @@ The library knows nothing about HTTP; the server holds no song logic.
   origin or host name are refused.
 - `/media/<file>`: EMQ files. EMQ only serves them with a session's cookies, which an `<audio>` element can't send
   cross-site, so the server streams them with a saved guest session (Range passed through for seeking).
+- `ws://.../api/audio?rate=<Hz>`: the page's final mix (after volume levelling) as 16-bit stereo PCM, played by the
+  app. WebView2 renders sound in msedgewebview2.exe, which Discord doesn't capture when the app window is streamed;
+  sound from MUMUsic.exe is. The page is silent while the socket is open and plays by itself when it is not.
 - WebView2 messages (`Windowing/HostBridge.cs`, the "window" section of `web/app.js`): `minimize`, `toggle_maximize`,
   `is_maximized`, `close` (hide to tray), `quit`, `start_move`, `start_resize`, `pick_library_file`, `open_url`,
   `take_open`. Events to the page: `windowState`, `tray`, `open`.
@@ -50,7 +54,9 @@ The library knows nothing about HTTP; the server holds no song logic.
 
 - `GET /api/work/<id>/art`: the AniList cover of an anime or the VNDB cover of a VN (VNDB has no banners), found once
   and kept in `art-cache.json`. The big view shows it when a song has no clip, or when its clip fails to load.
-  Pictures VNDB rates explicit (or AniList marks adult) start blurred; B blurs / shows it for every song of that work.
+  It also says whether the work is 18+ (a VNDB release rated 18+, or AniList's adult flag). Nothing is blurred by
+  default; the "Adult works" option blurs clips and pictures of 18+ works, and B blurs / shows a clip (that song) or
+  a picture (every song of that work), a choice that beats the option.
 - The Discord status has a "Listen on MUMUsic" button for the people who see it. Discord buttons only open https
   links, so it opens `docs/play.html` (GitHub Pages), which opens `mumusic://play/<song>`. The setup registers that
   scheme; Windows starts MUMUsic with the link, or the running app gets it from the second start (`AppLinks.cs`). The

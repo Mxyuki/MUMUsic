@@ -31,12 +31,16 @@ installs the new version and opens again on its own. Your likes, playlists and h
   Skip a song in its first 30 seconds and discovery steers away from that sound; like songs to steer towards it.
 - **For you**: songs that sound like several of your liked songs.
 - Click the cover in the player bar for the big view with the anime clip. Songs without a clip show the anime's
-  (AniList) or visual novel's (VNDB) picture instead; **B** blurs the clip or the picture.
+  (AniList) or visual novel's (VNDB) picture instead; **B** blurs the clip or the picture. The Options page can blur
+  every 18+ visual novel or adult anime automatically.
 - With Discord open, your status shows the song you're listening to. Friends who have MUMUsic can press
   **Listen on MUMUsic** on it to play the same song.
 - Space play / pause, Shift + arrows previous / next, arrows seek.
 - Closing the window keeps the music playing in the tray; use the tray menu to quit.
-- **Data** page: export / import your likes and playlists (also reads exports of the older AMQ / EMQ players).
+- Playlists, liked songs and artists can show only some kinds of song (openings, endings, inserts, BGM) and only
+  anime or VN songs; Play and Shuffle then play just those. An artist's songs are listed by anime / VN, then OP 1,
+  OP 2..., ED 1, ED 2..., inserts, BGM.
+- **Options** page: export / import your likes and playlists (also reads exports of the older AMQ / EMQ players).
 
 ## Build from source
 

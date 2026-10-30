@@ -1,6 +1,7 @@
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using MUMUsic.Desktop.Audio;
 using MUMUsic.Desktop.Integrations;
 using MUMUsic.Desktop.Library;
 using MUMUsic.Desktop.Security;
@@ -57,7 +58,7 @@ internal sealed partial class Api
         _state = state;
         _window = window;
         _updates = new UpdateService(settings, user);
-        _discord = new DiscordPresence(settings);
+        _discord = new DiscordPresence();
         _imports = new ListImports(user);
         Register();
     }
@@ -142,7 +143,7 @@ internal sealed partial class Api
             // The picture shown in the big view when a song has no clip; {"url": null} when there is none.
             var work = Lib.Works.GetValueOrDefault(a[0]) ?? throw new ApiException(404, "Not found");
             var picture = await _art.GetAsync(work);
-            return new { url = picture?.Url, nsfw = picture?.Nsfw ?? false };
+            return new { url = picture?.Url, adult = picture?.Adult ?? false };
         });
         Route("GET", $"/api/work/{SongId}", (_, a) => Lib.WorkPage(a[0]) ?? throw new ApiException(404, "Not found"));
         Route("GET", "/api/tag/(.+)", (_, a) => Lib.TagPage(Uri.UnescapeDataString(a[0])));
@@ -261,8 +262,7 @@ internal sealed partial class Api
         var current = _settings.Current;
         return new()
         {
-            ["available"] = true, ["on"] = current.Discord, ["appId"] = _discord.ClientId,
-            ["custom"] = !string.IsNullOrEmpty(current.DiscordAppId), ["status"] = _discord.Status,
+            ["available"] = true, ["on"] = current.Discord, ["status"] = _discord.Status,
         };
     }
 
@@ -382,32 +382,10 @@ internal sealed partial class Api
         return new { skip };
     }
 
-    /// <summary>{"on": bool} switches the status on / off; {"appId": "..."} sets the application id after testing it
-    /// against the running Discord ("" goes back to the one built into the app).</summary>
+    /// <summary>{"on": bool} switches the status on / off.</summary>
     private object SetDiscord(HttpRequest request)
     {
         var body = request.Json();
-        if (body.ContainsKey("appId"))
-        {
-            var appId = (body.Str("appId") ?? "").Trim();
-            if (appId.Length > 0)
-            {
-                try
-                {
-                    DiscordPresence.Test(appId);
-                }
-                catch (DiscordException error)
-                {
-                    throw new ApiException(400, error.Message);
-                }
-            }
-            _settings.Update(s =>
-            {
-                s.DiscordAppId = appId.Length > 0 ? appId : null;
-                s.Discord = true;
-            });
-            _discord.Reset();
-        }
         if (body.Bool("on") is { } on)
         {
             _settings.Update(s => s.Discord = on);
@@ -474,6 +452,13 @@ internal sealed partial class Api
         {
             response.KeepAlive = false;
             await response.JsonAsync(403, new { error = "Forbidden" });
+            return;
+        }
+        if (request.Path == "/api/audio" && request.IsWebSocket)
+        {
+            // The page's music, played by this process (Audio/PageAudio.cs).
+            var rate = Math.Clamp(IntQuery(request, "rate", 48000), 8000, 192000);
+            await PageAudio.ReceiveAsync(await response.AcceptWebSocketAsync(request), rate);
             return;
         }
         if (request.Path.StartsWith("/media/", StringComparison.Ordinal) && request.Method == "GET")

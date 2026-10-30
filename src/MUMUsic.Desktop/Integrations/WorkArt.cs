@@ -6,9 +6,9 @@ namespace MUMUsic.Desktop.Integrations;
 
 /// <summary>A work's picture for the big view of a song without a clip.</summary>
 /// <param name="Url">The image on AniList's or VNDB's servers.</param>
-/// <param name="Nsfw">VNDB rates the image explicit, or AniList marks the anime adult: shown blurred until the user
-/// chooses otherwise.</param>
-internal sealed record WorkPicture(string Url, bool Nsfw);
+/// <param name="Adult">The VN has an 18+ release on VNDB, or AniList marks the anime adult: the page can blur its clips
+/// and picture (an option, off by default). Null in pictures cached by 2.0.0, which are then asked again.</param>
+internal sealed record WorkPicture(string Url, bool? Adult);
 
 /// <summary>
 /// Pictures of anime (AniList cover) and visual novels (VNDB cover). VNs have no banner on VNDB, the cover is the image
@@ -17,8 +17,7 @@ internal sealed record WorkPicture(string Url, bool Nsfw);
 /// </summary>
 internal sealed class WorkArt
 {
-    // VNDB's image ratings are averages of votes: 0 safe, 1 suggestive, 2 explicit.
-    private const double ExplicitRating = 1.3;
+    private const int AdultAge = 18;
     private const string AniListQuery = "query ($id: Int) { Media(id: $id, type: ANIME) { isAdult coverImage { extraLarge large } } }";
 
     private static readonly HttpClient Http = new()
@@ -38,7 +37,7 @@ internal sealed class WorkArt
         key = $"{work.Kind}:{key}";
         lock (_gate)
         {
-            if (_found.TryGetValue(key, out var known)) return known;
+            if (_found.TryGetValue(key, out var known) && known.Adult is not null) return known;
             if (_missing.Contains(key)) return null;
         }
         WorkPicture? picture;
@@ -76,15 +75,25 @@ internal sealed class WorkArt
 
     private static async Task<WorkPicture?> FromVndb(string id)
     {
-        using var response = await Http.PostAsJsonAsync($"{AppInfo.VndbApi}/vn",
-            new { filters = new object[] { "id", "=", id }, fields = "image.url, image.sexual, image.violence" });
+        var vn = VndbResults("vn", new { filters = new object[] { "id", "=", id }, fields = "image.url" });
+        // The age rating is on the releases: a VN counts as 18+ when any of its releases is (an all-ages port of an
+        // eroge still has the 18+ original).
+        var ofThisVn = new object[] { "vn", "=", new object[] { "id", "=", id } };
+        var adultReleases = VndbResults("release", new
+        {
+            filters = new object[] { "and", ofThisVn, new object[] { "minage", ">=", AdultAge } },
+            results = 1,
+        });
+        var url = ((await vn)?.FirstOrDefault()?["image"] as JsonObject)?.Str("url");
+        var adult = await adultReleases;
+        return url is null || adult is null ? null : new WorkPicture(url, adult.Count > 0);
+    }
+
+    /// <summary>A VNDB query's results, or null when VNDB answered with an error.</summary>
+    private static async Task<JsonArray?> VndbResults(string endpoint, object query)
+    {
+        using var response = await Http.PostAsJsonAsync($"{AppInfo.VndbApi}/{endpoint}", query);
         if (!response.IsSuccessStatusCode) return null;
-        var results = (await response.Content.ReadFromJsonAsync<JsonObject>())?["results"] as JsonArray;
-        var image = results?.FirstOrDefault()?["image"] as JsonObject;
-        var url = image?.Str("url");
-        if (url is null) return null;
-        var sexual = image!["sexual"]?.GetValue<double>() ?? 0;
-        var violence = image["violence"]?.GetValue<double>() ?? 0;
-        return new WorkPicture(url, sexual >= ExplicitRating || violence >= ExplicitRating);
+        return (await response.Content.ReadFromJsonAsync<JsonObject>())?["results"] as JsonArray;
     }
 }

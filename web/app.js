@@ -40,6 +40,7 @@ const ICONS = {
   tag: '<path d="M3.5 12.5V4H12l8.5 8.5-8 8z"/><circle cx="8" cy="8.5" r="1.3"/>',
   list: '<path d="M4 6h16M4 12h16M4 18h10"/>',
   user: '<circle cx="12" cy="8" r="4"/><path d="M4 21c1-4.5 4.5-6.5 8-6.5s7 2 8 6.5"/>',
+  sliders: '<path d="M4 7h10M18 7h2M4 17h4M12 17h8"/><circle cx="16" cy="7" r="2"/><circle cx="10" cy="17" r="2"/>',
   data: '<path d="M4 6c0-1.7 3.6-3 8-3s8 1.3 8 3-3.6 3-8 3-8-1.3-8-3zM4 6v12c0 1.7 3.6 3 8 3s8-1.3 8-3V6M4 12c0 1.7 3.6 3 8 3s8-1.3 8-3"/>',
   link: '<path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/>',
   tv: '<path d="M3.5 7h17v12h-17zM8 3l4 4 4-4"/>',
@@ -148,8 +149,64 @@ function audioGraph() {
     limiter.threshold.value = -1; limiter.knee.value = 0; limiter.ratio.value = 20;
     limiter.attack.value = 0.002; limiter.release.value = 0.15;
     actx.createMediaElementSource(audio).connect(gainNode).connect(limiter).connect(actx.destination);
+    if (window.chrome?.webview) hostOutput(limiter).catch((e) => console.warn("host audio output unavailable", e));
   } catch (e) { console.warn("volume levelling unavailable", e); actx = gainNode = null; }
   applyVolume();
+}
+
+/* host audio output: WebView2 plays sound from its own processes, which Discord doesn't capture when the app is
+   streamed. In the desktop app the final mix goes to the host as 16-bit stereo PCM over a WebSocket and the host plays
+   it (src/MUMUsic.Desktop/Audio/PageAudio.cs); the page stays silent while the socket is open. Silent blocks (paused)
+   aren't sent, so the host can close the device. */
+const HOST_TAP = `
+class HostTap extends AudioWorkletProcessor {
+  constructor() {
+    super();
+    this.on = false;
+    this.pcm = new Int16Array(2048);
+    this.n = 0;
+    this.port.onmessage = (e) => { this.on = e.data; this.n = 0; };
+  }
+  process(inputs, outputs) {
+    const input = inputs[0], output = outputs[0];
+    if (!input.length) return true;
+    const left = input[0], right = input[1] || input[0];
+    if (!this.on) {
+      output[0].set(left);
+      if (output[1]) output[1].set(right);
+      return true;
+    }
+    let sound = false;
+    for (let i = 0; i < left.length; i++) {
+      if (left[i] !== 0 || right[i] !== 0) { sound = true; break; }
+    }
+    if (!sound) return true;
+    for (let i = 0; i < left.length; i++) {
+      this.pcm[this.n++] = Math.max(-1, Math.min(1, left[i])) * 32767;
+      this.pcm[this.n++] = Math.max(-1, Math.min(1, right[i])) * 32767;
+    }
+    if (this.n === this.pcm.length) {
+      this.port.postMessage(this.pcm.buffer, [this.pcm.buffer]);
+      this.pcm = new Int16Array(2048);
+      this.n = 0;
+    }
+    return true;
+  }
+}
+registerProcessor("host-tap", HostTap);`;
+async function hostOutput(limiter) {
+  await actx.audioWorklet.addModule(URL.createObjectURL(new Blob([HOST_TAP], { type: "text/javascript" })));
+  const tap = new AudioWorkletNode(actx, "host-tap", { outputChannelCount: [2] });
+  limiter.disconnect();
+  limiter.connect(tap).connect(actx.destination);
+  const connect = () => {
+    const ws = new WebSocket(`ws://${location.host}/api/audio?rate=${actx.sampleRate}`);
+    ws.binaryType = "arraybuffer";
+    ws.onopen = () => tap.port.postMessage(true);
+    ws.onclose = () => { tap.port.postMessage(false); setTimeout(connect, 3000); };
+    tap.port.onmessage = (e) => { if (ws.readyState === WebSocket.OPEN && ws.bufferedAmount < 1 << 20) ws.send(e.data); };
+  };
+  connect();
 }
 // An AudioContext may only start after a user gesture, and while it is suspended the music is silent: build it on the
 // first click / key press (before anything can play through it) and resume it on later ones if the browser paused it.
@@ -389,6 +446,49 @@ function workColumn(songs) {
   return kinds.size === 1 ? workLabel([...kinds][0]) : "Anime / VN";
 }
 
+// Chips over a playlist, the liked songs or an artist's songs: show only openings, endings... and / or only anime or
+// VN songs (several chips at once). The choice is in the page link (?kinds=OP,ED&from=vn), so Play / Shuffle /
+// Discover use the songs shown.
+const songKind = (s) => (s.kind || "").split(":")[1] || "OTHER";
+const SONG_FILTERS = [
+  { param: "kinds", key: songKind,
+    chips: [["OP", "Openings"], ["ED", "Endings"], ["INS", "Inserts"], ["BGM", "BGM / OST"], ["OTHER", "Other"]] },
+  { param: "from", key: (s) => (s.workKind === "vn" ? "vn" : "anime"), chips: [["anime", "Anime"], ["vn", "VN"]] },
+];
+function songFilters(songs, params) {
+  let shown = songs, filtered = false;
+  const groups = [];
+  for (const f of SONG_FILTERS) {
+    const counts = {};
+    for (const s of songs) counts[f.key(s)] = (counts[f.key(s)] || 0) + 1;
+    const present = f.chips.filter(([k]) => counts[k]);
+    if (present.length < 2) continue;
+    const picked = new Set((params.get(f.param) || "").split(",").filter((k) => counts[k]));
+    if (picked.size) { shown = shown.filter((s) => picked.has(f.key(s))); filtered = true; }
+    groups.push(`<button class="chip ${picked.size ? "" : "on"}" data-song-filter="${f.param}:">All<small>${fmt(songs.length)}</small></button>`
+      + present.map(([k, label]) => `<button class="chip ${picked.has(k) ? "on" : ""}" data-song-filter="${f.param}:${k}">${label}<small>${fmt(counts[k])}</small></button>`).join(""));
+  }
+  const html = groups.length ? `<div class="chips song-filters">${groups.join('<span class="chip-sep"></span>')}</div>` : "";
+  return { songs: shown, html, filtered };
+}
+function toggleSongFilter(spec) {
+  const [param, value] = spec.split(":");
+  setHashParam(param, (picked) => {
+    if (!value) picked.clear();
+    else if (picked.has(value)) picked.delete(value);
+    else picked.add(value);
+  });
+}
+// Changes one comma-separated parameter of the page link, keeping the others.
+function setHashParam(param, change) {
+  const [base, query = ""] = location.hash.split("?");
+  const params = new URLSearchParams(query);
+  const values = new Set((params.get(param) || "").split(",").filter(Boolean));
+  change(values);
+  if (values.size) params.set(param, [...values].join(",")); else params.delete(param);
+  location.hash = params.size ? `${base}?${params}` : base;
+}
+
 function songTable(songs, { numbered = true, match = false, because = false, draggable = false, sortable = true } = {}) {
   remember(songs);
   if (!songs.length) return "";
@@ -505,10 +605,11 @@ const pages = {
     return html;
   },
 
-  async liked() {
+  async liked(params) {
     const d = await api.get("/api/likes");
     state.likes = new Set(d.ids);
-    const lid = d.songs.length ? regList(d.songs) : null;
+    const kinds = songFilters(d.songs, params);
+    const lid = kinds.songs.length ? regList(kinds.songs) : null;
     const h = head({
       eyebrow: "Collection", title: "Liked songs",
       sub: `<span class="mono">${fmt(d.songs.length)} songs</span>`,
@@ -516,7 +617,7 @@ const pages = {
       actions: lid ? listActions(lid) : "",
     });
     if (!d.songs.length) return h + empty("Nothing liked yet", "Hit the heart on songs you enjoy. Your likes power the “For you” recommendations and discovery mode.");
-    return h + `<div class="list-tools"><input class="filter" placeholder="Filter liked songs" data-filter></div>` + songTable(d.songs);
+    return h + `<div class="list-tools"><input class="filter" placeholder="Filter liked songs" data-filter></div>` + kinds.html + songTable(kinds.songs);
   },
 
   async recommended(params) {
@@ -565,14 +666,15 @@ const pages = {
   async playlist(params, id) {
     const d = await api.get(`/api/playlists/${id}`);
     state.ctx = { playlist: Number(id) };
-    const lid = d.songs.length ? regList(d.songs) : null;
+    const kinds = songFilters(d.songs, params);
+    const lid = kinds.songs.length ? regList(kinds.songs) : null;
     return head({
       eyebrow: "Playlist", title: d.name, editable: true,
-      sub: `<span class="mono">${d.songs.length} songs · ${Math.round(d.songs.reduce((a, s) => a + (s.dur || 0), 0) / 60)} min</span>${d.songs.length > 1 ? '<span class="mono">Drag rows to reorder</span>' : ""}`,
+      sub: `<span class="mono">${d.songs.length} songs · ${Math.round(d.songs.reduce((a, s) => a + (s.dur || 0), 0) / 60)} min</span>${d.songs.length > 1 && !kinds.filtered ? '<span class="mono">Drag rows to reorder</span>' : ""}`,
       artHtml: art(`pl${d.id}${d.name}`, initials(d.name), { code: `PL-${pad(d.id, 3)}` }),
       actions: (lid ? listActions(lid, { save: false }) : "")
         + `<button class="btn ghost" data-rename="1">${ic("edit")}Rename</button><button class="btn ghost danger" data-delete-playlist="${d.id}">${ic("trash")}Delete</button>`,
-    }) + (d.songs.length ? songTable(d.songs, { draggable: true, sortable: false })
+    }) + kinds.html + (d.songs.length ? songTable(kinds.songs, { draggable: !kinds.filtered, sortable: false })
       : empty("Empty playlist", "Add songs from any song's ⋯ menu, or drag a song row onto this playlist in the sidebar."));
   },
 
@@ -591,11 +693,11 @@ const pages = {
       + (d.songs.length ? songTable(d.songs, { sortable: false }) : empty("No songs", `This ${label.toLowerCase()} has no songs in the library.`));
   },
 
-  async data() {
+  async options() {
     const st = state.stats || (await api.get("/api/home")).stats;
     const a = state.app = await api.get("/api/app");
     const lib = a.library || {};
-    return head({ eyebrow: "System", title: "Your data", sub: "<span>Likes, playlists and play history are stored on this computer in <b class=\"mono\">%APPDATA%\\MUMUsic\\user.db</b>, backed up to <b class=\"mono\">user.backup.db</b> every time the app starts.</span>" })
+    return head({ eyebrow: "System", title: "Options", sub: "<span>Likes, playlists and play history are stored on this computer in <b class=\"mono\">%APPDATA%\\MUMUsic\\user.db</b>, backed up to <b class=\"mono\">user.backup.db</b> every time the app starts.</span>" })
       + `<div class="stat-line" style="margin-top:22px"><span><b>${fmt(state.likes.size)}</b> liked</span><span><b>${fmt(state.playlists.length)}</b> playlists</span><span><b>${fmt(st.analysed)}</b> / ${fmt(st.songs)} analysed</span></div>
       <div class="data-grid">
         <div class="data-card"><div class="eyebrow">01 // Export</div><h3>Export</h3><p>Download all your likes and playlists as a JSON file. Songs are saved with their id, file name, title and artist so the file still works if the library changes.</p>
@@ -608,6 +710,7 @@ const pages = {
           ${a.online && !lib.dev ? `<button class="btn" data-check-updates>${ic("refresh")}Check for updates</button>` : ""}</div>
         ${songKindsCard(a)}
         ${discordCard(a.discord || {})}
+        ${blurCard()}
       </div>`;
   },
 };
@@ -617,7 +720,9 @@ async function personPage(id, params) {
   const kind = d.kind;
   const tab = params.get("tab") || (d.songs.length ? "songs" : d.composed.length ? "composed" : d.arranged.length ? "arranged" : d.lyrics.length ? "lyrics" : "songs");
   const lists = { songs: d.songs, composed: d.composed, arranged: d.arranged, lyrics: d.lyrics };
-  const songs = lists[tab] || d.songs;
+  const all = lists[tab] || d.songs;
+  const filters = songFilters(all, params);
+  const songs = filters.songs;
   const lid = songs.length ? regList(songs) : null;
   let sub = `<span class="mono">${kind} · ${d.songs.length} songs</span>`;
   if (d.aliases.length) sub += `<span>Also credited as ${d.aliases.map(esc).join(", ")}</span>`;
@@ -630,7 +735,7 @@ async function personPage(id, params) {
   if (d.groups?.length) html += `<div class="section"><div class="section-head"><span class="num">//</span><h2>${kind === "group" ? "Part of" : "Groups & units"}</h2><span class="rule"></span></div><div class="chips">${d.groups.map((g) => `<a class="chip" href="#/artist/${g.id}">${esc(g.name)}<small>${g.count}</small></a>`).join("")}</div></div>`;
   const tabs = [["songs", "Performed", d.songs.length], ["composed", "Composed", d.composed.length], ["arranged", "Arranged", d.arranged.length], ["lyrics", "Lyrics", d.lyrics.length]].filter(([, , n], i) => i === 0 || n);
   if (tabs.length > 1) html += `<div class="tabs">${tabs.map(([k, label, n]) => `<button class="${k === tab ? "active" : ""}" data-tab="${k}">${label}<small>${n}</small></button>`).join("")}</div>`;
-  html += songs.length ? `<div class="list-tools"><input class="filter" placeholder="Filter songs" data-filter><span class="mono">${tab === "songs" ? "Includes songs with their groups & units" : ""}</span></div>` + songTable(songs)
+  html += all.length ? `<div class="list-tools"><input class="filter" placeholder="Filter songs" data-filter><span class="mono">${tab === "songs" ? "Includes songs with their groups & units" : ""}</span></div>` + filters.html + songTable(songs)
     : empty("No songs", "Nothing here.");
   return html;
 }
@@ -1045,12 +1150,30 @@ $("#player").addEventListener("click", (e) => {
 // One <video> element is reused for every song and emptied on close: creating a new one per song leaks media
 // players until garbage collection, and once Chrome hits its player limit it pauses / refuses to load the music too.
 let stageSong = null, stageToken = 0, lastHardSync = 0;
-// Clips the user chose to hide (some VN openings are explicit): blurred again whenever the song comes back.
-const blurredSongs = new Set(store.get("blurredSongs", []));
-// Songs without a clip show their anime's (AniList) or VN's (VNDB) picture instead. Its blur is chosen per anime / VN:
-// {workId: true | false}; without a choice, pictures rated explicit start blurred.
-const artBlur = store.get("artBlur", {});
-const artBlurred = (workId, nsfw) => artBlur[workId] ?? nsfw;
+// Nothing is blurred unless the user asks: per clip ({songId: true | false}, kept when the song comes back), per anime /
+// VN picture for songs without a clip ({workId: ...}), or for every 18+ work (option). A choice beats the option.
+// The older "blurredSongs" / "artBlur" choices are dropped: pictures used to start blurred from VNDB's image rating, so
+// what they held looked random.
+for (const old of ["blurredSongs", "artBlur"]) { try { localStorage.removeItem(old); } catch { /* storage blocked */ } }
+const clipBlur = store.get("clipBlur", {});
+const artBlur = store.get("workBlur", {});
+let autoBlurAdult = store.get("autoBlurAdult", false);
+const workAdult = new Map();          // workId -> 18+ (from /api/work/<id>/art)
+const clipBlurred = (s) => clipBlur[s.id] ?? (autoBlurAdult && workAdult.get(s.workId) !== false);
+const artBlurred = (s) => artBlur[s.workId] ?? (autoBlurAdult && workAdult.get(s.workId) === true);
+// The anime / VN picture and whether the work is 18+; the host caches both after the first time.
+async function workArt(workId) {
+  const art = await api.get(`/api/work/${workId}/art`);
+  workAdult.set(workId, !!art.adult);
+  return art;
+}
+function setAutoBlur(on) {
+  autoBlurAdult = on;
+  store.set("autoBlurAdult", on);
+  stageSong = null;
+  renderStage();
+  render();
+}
 const stageVideo = document.createElement("video");
 stageVideo.id = "stageVideo";
 stageVideo.muted = stageVideo.defaultMuted = true;
@@ -1105,7 +1228,7 @@ function renderStage() {
       <button class="stage-close" data-stage-close title="Back (Esc)">${ic("close")}<span>Close</span><kbd>Esc</kbd></button>
     </div>
     <div class="stage-body">
-      <div class="stage-screen ${s.video ? "has-video" : ""} ${blurredSongs.has(s.id) ? "blurred" : ""}">
+      <div class="stage-screen ${s.video ? "has-video" : ""} ${s.video && clipBlurred(s) ? "blurred" : ""}">
         ${songArt(s, "stage-art")}
       </div>
       <div class="stage-info">
@@ -1119,7 +1242,7 @@ function renderStage() {
           <button class="icon-btn ${state.likes.has(s.id) ? "liked" : ""}" data-like="${s.id}" title="Like">${ic("heart")}</button>
           ${state.radio.on ? "" : `<button class="btn" data-radio="${s.id}" title="Keep playing songs that sound like this one">${ic("radio")}Discover</button>`}
           <button class="btn ghost" data-stage-details="${s.id}">${ic("info")}Details</button>
-          ${s.video ? `<button class="btn ghost" data-stage-blur title="Blur this clip, also the next times it plays (B)">${blurLabel(s.id)}</button>` : ""}
+          ${s.video ? `<button class="btn ghost" data-stage-blur title="Blur this clip, also the next times it plays (B)">${blurLabel(s)}</button>` : ""}
         </div>
         <div class="stage-next" id="stageNext"></div>
       </div>
@@ -1129,6 +1252,15 @@ function renderStage() {
     if (stageVideo.getAttribute("src") !== url) stageVideo.setAttribute("src", url);   // swaps the clip, same player
     $(".stage-screen", stage).appendChild(stageVideo);
     if (stageVideo.readyState >= 3) syncStageVideo(true);
+    // With the 18+ option, a clip of a work not checked yet starts blurred until the host has the answer.
+    if (autoBlurAdult && clipBlur[s.id] == null && !workAdult.has(s.workId)) {
+      workArt(s.workId).catch(() => workAdult.set(s.workId, false)).then(() => {
+        if (token !== stageToken) return;
+        $(".stage-screen", stage)?.classList.toggle("blurred", clipBlurred(s));
+        const btn = $("[data-stage-blur]", stage);
+        if (btn) btn.innerHTML = blurLabel(s);
+      });
+    }
   } else {
     releaseStageVideo();
     showStageCover(s, token);
@@ -1142,20 +1274,19 @@ function renderStage() {
     $("#stageKv").innerHTML = rows.map(([k, v]) => `<dt>${esc(k)}</dt><dd>${v}</dd>`).join("");
   }).catch(() => {});
 }
-const blurLabel = (id) => blurredSongs.has(id) ? `${ic("eye")}Show clip` : `${ic("eyeoff")}Blur clip`;
+const blurLabel = (s) => clipBlurred(s) ? `${ic("eye")}Show clip` : `${ic("eyeoff")}Blur clip`;
 const artBlurLabel = (blurred) => blurred ? `${ic("eye")}Show picture` : `${ic("eyeoff")}Blur picture`;
 // The anime / VN picture behind a song without a clip, once the host has found it (cached after the first time).
 async function showStageCover(s, token) {
   let art;
-  try { art = await api.get(`/api/work/${s.workId}/art`); } catch { return; }
+  try { art = await workArt(s.workId); } catch { return; }
   const screen = $(".stage-screen", stage);
   if (!art.url || token !== stageToken || !screen || screen.classList.contains("has-video")) return;
-  const blurred = artBlurred(s.workId, art.nsfw);
+  const blurred = artBlurred(s);
   const url = esc(art.url);
   screen.insertAdjacentHTML("beforeend", `<div class="stage-cover"><img class="backdrop" src="${url}" alt=""><img class="picture" src="${url}" alt=""></div>`);
   screen.classList.add("has-cover");
   screen.classList.toggle("blurred", blurred);
-  screen.dataset.nsfw = art.nsfw ? "1" : "";
   const img = $(".stage-cover .picture", screen);
   img.addEventListener("load", () => screen.classList.add("cover-live"), { once: true });
   img.addEventListener("error", () => screen.classList.remove("has-cover", "cover-live", "blurred"), { once: true });
@@ -1168,14 +1299,14 @@ function toggleBlur() {
   if (stage.hidden || !s || !screen) return;
   const btn = $("[data-stage-blur]", stage);
   if (screen.classList.contains("has-video")) {
-    if (blurredSongs.has(s.id)) blurredSongs.delete(s.id); else blurredSongs.add(s.id);
-    store.set("blurredSongs", [...blurredSongs]);
-    screen.classList.toggle("blurred", blurredSongs.has(s.id));
-    if (btn) btn.innerHTML = blurLabel(s.id);
+    clipBlur[s.id] = !clipBlurred(s);
+    store.set("clipBlur", clipBlur);
+    screen.classList.toggle("blurred", clipBlur[s.id]);
+    if (btn) btn.innerHTML = blurLabel(s);
     return;
   }
-  artBlur[s.workId] = !artBlurred(s.workId, !!screen.dataset.nsfw);
-  store.set("artBlur", artBlur);
+  artBlur[s.workId] = !artBlurred(s);
+  store.set("workBlur", artBlur);
   screen.classList.toggle("blurred", artBlur[s.workId]);
   if (btn) btn.innerHTML = artBlurLabel(artBlur[s.workId]);
 }
@@ -1426,9 +1557,10 @@ document.addEventListener("click", async (e) => {
   if ((x = el("[data-saveall]"))) { const ids = state.lists.get(x.dataset.saveall); if (ids) { const pid = await createPlaylist(ids); if (pid) location.hash = `#/playlist/${pid}`; } return; }
   if (el("[data-start-disco]")) { startDiscovery(); return; }
   if (el("[data-reload]")) { e.preventDefault(); render(); return; }
+  if ((x = el("[data-song-filter]"))) { toggleSongFilter(x.dataset.songFilter); return; }
   if ((x = el("[data-tab]"))) {
-    const base = location.hash.split("?")[0];
-    location.hash = `${base}?tab=${x.dataset.tab}`;
+    const tab = x.dataset.tab;
+    setHashParam("tab", (values) => { values.clear(); values.add(tab); });
     return;
   }
   if (el("[data-rename]") && state.ctx?.playlist) {
@@ -1447,8 +1579,7 @@ document.addEventListener("click", async (e) => {
   }
   if (el("[data-check-updates]")) { checkUpdates(true); return; }
   if (el("[data-discord]")) { saveDiscord({ on: !state.app.discord.on }); return; }
-  if (el("[data-discord-id]")) { saveDiscord({ appId: $("#discordAppId").value.trim() }); return; }
-  if (el("[data-discord-change]")) { state.discordEdit = true; render(); return; }
+  if (el("[data-auto-blur]")) { setAutoBlur(!autoBlurAdult); return; }
   if (el("[data-export]")) { exportData(); return; }
   if (el("[data-import]")) { $("#importFile").click(); return; }
   if ((x = el("[data-theme-set]"))) { setTheme(x.dataset.themeSet || null); return; }
@@ -1577,30 +1708,27 @@ document.addEventListener("change", async (e) => {
   }
 });
 function discordCard(d) {
-  const editing = !d.available || state.discordEdit;
-  const status = !d.available ? "" : !d.on ? "Off" : d.status === "connected" ? "Showing on your profile"
+  const status = !d.on ? "Off" : d.status === "connected" ? "Showing on your profile"
     : d.status === "idle" ? "Shows up when a song plays" : d.status;
   return `<div class="data-card"><div class="eyebrow">06 // Discord</div><h3>Discord status</h3>
     <p>Shows what you listen to on your Discord profile: title, artist, anime or VN, and how far into the song you are.</p>
-    ${editing ? `<p style="font-size:13px;color:var(--ink-3)">Needs the id of a Discord application:
-        discord.com/developers → New Application (its name is what shows after "Listening to") → copy the Application ID.</p>
-      <div class="actions" style="margin-top:0"><input class="filter" id="discordAppId" placeholder="Application ID" value="${esc(d.appId || "")}" inputmode="numeric" spellcheck="false">
-      <button class="btn primary" data-discord-id>Test &amp; save</button></div>`
-    : `<div class="actions" style="margin-top:0"><button class="btn ${d.on ? "on" : ""}" data-discord>${d.on ? "On" : "Off"}</button>
-      <button class="btn ghost" data-discord-change>Change app id</button></div>
-      <p class="mono" style="margin-top:12px;text-transform:none;letter-spacing:0">${esc(status)}</p>`}</div>`;
+    <div class="actions" style="margin-top:0"><button class="btn ${d.on ? "on" : ""}" data-discord>${d.on ? "On" : "Off"}</button></div>
+    <p class="mono" style="margin-top:12px;text-transform:none;letter-spacing:0">${esc(status || "")}</p></div>`;
 }
 async function saveDiscord(change) {
   try {
     state.app.discord = await api.put("/api/discord", change);
-    state.discordEdit = false;
     if (state.app.discord.on) reportPresence();
-    if (change.appId) toast("Discord accepted the application id");
   } catch (err) {
     toast(err.message, { error: true, ms: 7000 });
     return;
   }
   render();
+}
+function blurCard() {
+  return `<div class="data-card"><div class="eyebrow">07 // Clips</div><h3>Adult works</h3>
+    <p>Blur the clip and picture of songs from 18+ visual novels (VNDB) and adult anime (AniList). B or the button in the big view still blurs or shows any of them.</p>
+    <div class="actions" style="margin-top:0"><button class="btn ${autoBlurAdult ? "on" : ""}" data-auto-blur>${autoBlurAdult ? "On" : "Off"}</button></div></div>`;
 }
 
 /* ================================================================== export, theme, keys */
@@ -1656,7 +1784,7 @@ $("#aniListBtn").onclick = importAniList;
 $("#vndbBtn").innerHTML = ic("vndb");
 $("#vndbBtn").onclick = importVndb;
 $("#newPlaylistBtn").onclick = async () => { const pid = await createPlaylist(); if (pid) location.hash = `#/playlist/${pid}`; };
-$("#dataBtn").innerHTML = `${ic("data")}Data`;
+$("#optionsBtn").innerHTML = `${ic("sliders")}Options`;
 $("#searchIcon").innerHTML = ic("search");
 $("#navToggle").innerHTML = ic("list");
 $("#navToggle").onclick = () => document.querySelector(".app").classList.toggle("nav-open");
@@ -1700,6 +1828,7 @@ function onWindowState(maximized) {
 if (shell) {
   document.body.classList.add("desktop");
   shell.is_maximized().then(onWindowState);
+  audioGraph();       // the host allows sound without a click, and a song opened from a link plays through the host too
 }
 
 $("#titlebar").addEventListener("click", (e) => {

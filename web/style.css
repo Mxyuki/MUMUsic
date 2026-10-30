@@ -287,6 +287,9 @@ svg { width: 1em; height: 1em; display: block; fill: none; stroke: currentColor;
 }
 .chip:hover { border-color: var(--ink); color: var(--ink); }
 .chip small { font: 500 10px var(--mono); color: var(--ink-3); }
+.chip.on { border-color: var(--accent); color: var(--ink); }
+.song-filters { margin: 12px 0 4px; align-items: center; }
+.chip-sep { width: 1px; height: 20px; margin: 0 6px; background: var(--line-2); }
 .chip.tag::before { content: ""; width: 6px; height: 6px; background: var(--ink-3); }
 .chip.tag.genre::before { background: var(--accent); }
 .chip.tag.mood::before { border-radius: 50%; background: var(--ink); }
